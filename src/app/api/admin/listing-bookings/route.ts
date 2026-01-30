@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { sendEmail } from "@/lib/mail";
 
-// Helper: Find available vehicles with similar attributes
+// Helper: Find available vehicles with similar attributes - COM PRIORIZAÇÃO LOCAL
 async function findAvailableVehicles(booking: any, excludeVehicleId: string, partnerId?: string) {
   let query = supabaseAdmin
     .from("vehicles")
@@ -10,18 +10,23 @@ async function findAvailableVehicles(booking: any, excludeVehicleId: string, par
     .neq("id", excludeVehicleId)
     .eq("status", "active");
 
-  if (partnerId) {
-    query = query.eq("partner_id", partnerId);
-  }
-
-  // Se for rental ou transfer, filtrar por disponibilidade
+  // Se for rental ou transfer, filtrar por disponibilidade PRIMEIRO
   if (booking.service_type === 'rental') {
     query = query.in("available_for", ["rental", "both"]);
   } else if (booking.service_type === 'transfer') {
     query = query.in("available_for", ["transfer", "both"]);
   }
 
-  const { data: vehicles } = await query.limit(10);
+  if (partnerId) {
+    query = query.eq("partner_id", partnerId);
+  }
+
+  const { data: vehicles } = await query.limit(5);
+  
+  if (!vehicles || vehicles.length === 0) {
+    console.log(`[REASSIGN] Nenhum veículo disponível para ${booking.service_type} ${partnerId ? "em " + partnerId : "globalmente"}`);
+  }
+  
   return vehicles || [];
 }
 
@@ -105,28 +110,35 @@ async function notifyClientAboutAssignment(bookingId: string) {
   }
 }
 
-// Helper: Attempt reassignment
+// Helper: Attempt reassignment COM LÓGICA MELHORADA
 async function attemptReassignment(booking: any, reason: string) {
   try {
-    console.log(`🔄 Iniciando reatribuição para booking ${booking.id}...`);
+    console.log(`[REASSIGN] Iniciando reatribuição para booking ${booking.id} (tipo: ${booking.service_type})...`);
 
-    // 1. Tentar primeiro no mesmo parceiro
-    let altVehicles = await findAvailableVehicles(booking, booking.vehicle_id || "", booking.partner_id);
-    let altDrivers = await findAvailableDrivers(booking, booking.driver_id || "", booking.partner_id);
+    // 1. Buscar PARALELAMENTE no mesmo parceiro
+    const [altVehiclesLocal, altDriversLocal] = await Promise.all([
+      findAvailableVehicles(booking, booking.vehicle_id || "", booking.partner_id),
+      findAvailableDrivers(booking, booking.driver_id || "", booking.partner_id)
+    ]);
 
-    // 2. Se não encontrar no mesmo parceiro, tentar GLOBALMENTE (outros parceiros)
-    if (altVehicles.length === 0 || altDrivers.length === 0) {
-      console.log(`⚠️ Nenhum recurso disponível no parceiro original (${booking.partner_id}). Tentando busca global...`);
-      altVehicles = await findAvailableVehicles(booking, booking.vehicle_id || "");
-      altDrivers = await findAvailableDrivers(booking, booking.driver_id || "");
+    let altVehicle = altVehiclesLocal[0];
+    let altDriver = altDriversLocal[0];
+
+    // 2. Se não encontrar NO MESMO PARCEIRO, tentar GLOBALMENTE (outros parceiros)
+    if (!altVehicle || !altDriver) {
+      console.log(`[REASSIGN] Sem recursos no parceiro local. Buscando globalmente...`);
+      const [altVehiclesGlobal, altDriversGlobal] = await Promise.all([
+        findAvailableVehicles(booking, booking.vehicle_id || ""),
+        findAvailableDrivers(booking, booking.driver_id || "")
+      ]);
+      
+      if (!altVehicle) altVehicle = altVehiclesGlobal[0];
+      if (!altDriver) altDriver = altDriversGlobal[0];
     }
 
-    const altVehicle = altVehicles[0];
-    const altDriver = altDrivers[0];
-
-    // Se ambos encontrados, reassign
+    // 3. Se AMBOS encontrados, REASSIGN com status correto
     if (altVehicle && altDriver) {
-      console.log(`✅ Novo recurso encontrado! Veículo: ${altVehicle.id}, Motorista: ${altDriver.id}, Parceiro: ${altVehicle.partner_id}`);
+      console.log(`[REASSIGN] ✅ Novo recurso encontrado! Veículo: ${altVehicle.id}, Motorista: ${altDriver.id}, Novo Parceiro: ${altVehicle.partner_id}`);
 
       const { data: reassigned, error: updateError } = await supabaseAdmin
         .from("bookings")
@@ -134,7 +146,9 @@ async function attemptReassignment(booking: any, reason: string) {
           vehicle_id: altVehicle.id,
           driver_id: altDriver.id,
           partner_id: altVehicle.partner_id, // Pode ser um novo parceiro
-          status: "pending", // Volta a ficar pendente para o novo condutor/parceiro aceitar se necessário
+          status: altVehicle.partner_id === booking.partner_id ? "assigned" : "pending_partner_acceptance", // Status apropriado
+          reassignment_reason: reason,
+          reassignments_count: (booking.reassignments_count || 0) + 1,
           updated_at: new Date().toISOString(),
         })
         .eq("id", booking.id)
@@ -156,26 +170,25 @@ async function attemptReassignment(booking: any, reason: string) {
       }
     }
 
-    // Se não encontrou alternativa, vai para a lista de espera
-    console.log(`⏳ Nenhum recurso compatível disponível. Booking ${booking.id} movido para lista de espera.`);
+    // 4. Se não encontrou alternativa, vai para lista de espera com partner_id MANTIDO
+    console.log(`[REASSIGN] ⏳ Sem recurso compatível. Booking ${booking.id} movido para lista de espera.`);
     const waitlistEntry = await createWaitlistEntry(booking, reason);
 
-    // Update booking status to reflect it's waiting for resources
-    // CRITICAL: Set partner_id to NULL so it "disappears" from the partner's list and stays only for Admin
+    // Update booking: manter partner_id para rastreabilidade, mas marcar como em espera
     await supabaseAdmin
       .from("bookings")
       .update({
-        status: "pending",
+        status: "waiting_for_resources",
         vehicle_id: null,
         driver_id: null,
-        partner_id: null, // Move to system-level/Admin
+        // partner_id: MANTÉM o original para auditoria
         updated_at: new Date().toISOString()
       })
       .eq("id", booking.id);
 
     return { success: true, type: "waitlist", data: waitlistEntry };
   } catch (error) {
-    console.error("Error during reassignment:", error);
+    console.error("[REASSIGN] Erro durante reatribuição:", error);
     return { success: false, error };
   }
 }

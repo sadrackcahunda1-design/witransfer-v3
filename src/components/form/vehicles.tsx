@@ -102,30 +102,38 @@ const VehicleRegistrationForm: React.FC<VehicleRegistrationFormProps> = ({
     doors: 4,
   };
 
-  // Debug: Log initial data
-  React.useEffect(() => {
-    if (providedData) {
-      console.log('🔍 [VehicleForm] Initial Data:', {
-        services: providedData.services,
-        extras: providedData.extras,
-        category: providedData.category
-      });
-    }
-  }, [providedData]);
+
 
   const { values, errors, isSubmitting, handleChange, setError, handleSubmit } = useForm({
     initialValues: { ...defaultData, ...(providedData || {}) },
     onSubmit: async (data) => {
-      // Validações básicas
-      // Validações básicas e listagem de erros
+      // Validações com feedback melhorado
       const missingFields: string[] = [];
-      if (!data.brand) { setError("brand", "Marca é obrigatória"); missingFields.push("Marca"); }
-      if (!data.model) { setError("model", "Modelo é obrigatório"); missingFields.push("Modelo"); }
-      if (!data.licensePlate) { setError("licensePlate", "Matrícula é obrigatória"); missingFields.push("Matrícula"); }
-      if (!data.category) { setError("category", "Categoria é obrigatória"); missingFields.push("Categoria"); }
+      const fieldErrors: Record<string, string> = {};
 
+      if (!data.brand) { 
+        fieldErrors.brand = "Marca é obrigatória";
+        missingFields.push("Marca"); 
+      }
+      if (!data.model) { 
+        fieldErrors.model = "Modelo é obrigatório";
+        missingFields.push("Modelo"); 
+      }
+      if (!data.licensePlate) { 
+        fieldErrors.licensePlate = "Matrícula é obrigatória";
+        missingFields.push("Matrícula"); 
+      }
+      if (!data.category) { 
+        fieldErrors.category = "Categoria é obrigatória";
+        missingFields.push("Categoria"); 
+      }
+
+      // Se há erros, aplicar todos e mostrar uma mensagem clara
       if (missingFields.length > 0) {
-        erro(`Campos obrigatórios em falta: ${missingFields.join(", ")}.`);
+        Object.entries(fieldErrors).forEach(([field, message]) => {
+          setError(field, message);
+        });
+        erro(`${missingFields.length} campo(s) obrigatório(s) não preenchido(s): ${missingFields.join(", ")}`);
         return;
       }
 
@@ -180,10 +188,15 @@ const VehicleRegistrationForm: React.FC<VehicleRegistrationFormProps> = ({
           sucesso(isEdit ? "Veículo atualizado com sucesso!" : "Veículo cadastrado com sucesso!");
           onSuccess?.();
         } else {
-          erro(result.error || "Erro ao salvar veículo");
+          // Mensagem real de erro do servidor
+          const errorMsg = result.error || "Falha ao salvar o veículo. Tente novamente.";
+          console.error("[VehicleForm] Save error:", result);
+          erro(errorMsg);
         }
       } catch (err: any) {
-        erro("Erro ao processar requisição");
+        console.error("[VehicleForm] Submit error:", err);
+        const errorMsg = err?.message || "Erro ao processar a requisição. Verifique sua conexão.";
+        erro(errorMsg);
       }
     },
   });
@@ -191,17 +204,32 @@ const VehicleRegistrationForm: React.FC<VehicleRegistrationFormProps> = ({
   const handleImageUpload = async (file: File | null) => {
     if (!file) return;
 
+    // Validação básica no cliente
+    const maxSizeKB = 5120; // 5MB
+    const fileSizeKB = file.size / 1024;
+    if (fileSizeKB > maxSizeKB) {
+      erro(`Imagem muito grande (${Math.round(fileSizeKB)}KB). Máximo: ${maxSizeKB}KB`);
+      return;
+    }
+
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      erro("Apenas JPG, PNG ou WEBP são aceitos");
+      return;
+    }
+
     setUploadingImage(true);
     try {
       const result = await uploadVehicleImage(file);
       if (result.success && result.data) {
         handleChange("image", result.data.url);
-        sucesso("Imagem do veículo carregada!");
+        sucesso("Imagem do veículo carregada com sucesso!");
       } else {
-        erro("Erro ao carregar imagem.");
+        // Erro com mensagem real do servidor
+        erro(result.error || "Falha ao carregar imagem. Tente novamente.");
       }
-    } catch (error) {
-      erro("Erro inesperado no upload.");
+    } catch (error: any) {
+      console.error("[VehicleForm] Upload error:", error);
+      erro("Erro inesperado durante upload. Verifique sua conexão.");
     } finally {
       setUploadingImage(false);
     }
@@ -385,9 +413,6 @@ const VehicleRegistrationForm: React.FC<VehicleRegistrationFormProps> = ({
               {allServices.length > 0 ? (
                 allServices.map((service) => {
                   const isChecked = values.services?.includes(service.id);
-                  if (isEdit && service.id && values.services) {
-                    console.log(`🔍 [Service] ${service.name} (${service.id}): checked=${isChecked}, in array=${values.services.includes(service.id)}`);
-                  }
                   return (
                     <label key={service.id} className="flex items-center gap-3 cursor-pointer group p-2 hover:bg-slate-50 rounded-none transition-all border border-transparent hover:border-slate-100">
                       <div className={`w-6 h-6 rounded-none border-2 flex items-center justify-center transition-all ${isChecked ? "bg-emerald-500 border-emerald-500 shadow-sm shadow-emerald-200" : "bg-white border-slate-200 group-hover:border-emerald-400"}`}>
@@ -565,10 +590,6 @@ const VehicleRegistrationForm: React.FC<VehicleRegistrationFormProps> = ({
             {features.length > 0 ? (
               features.map((feature) => {
                 const isChecked = (values.extras || []).includes(feature.id);
-                // Tip: extras for vehicle features
-                if (isEdit && feature.id && values.extras) {
-                  console.log(`🔍 [Extra] ${feature.name} (${feature.id}): checked=${isChecked}, in array=${values.extras.includes(feature.id)}`);
-                }
 
                 return (
                   <label key={feature.id} className="flex items-center gap-3 cursor-pointer group p-2 hover:bg-slate-50 transition-colors rounded-none border border-transparent hover:border-slate-100">
@@ -669,15 +690,21 @@ const VehicleRegistrationForm: React.FC<VehicleRegistrationFormProps> = ({
         </Button>
         <Button
           type="submit"
-          disabled={isSubmitting}
+          disabled={isSubmitting || uploadingImage}
           className="rounded-none h-12 px-10 font-black bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/25 disabled:opacity-50 transition-all flex items-center gap-2 text-xs tracking-widest"
+          title={uploadingImage ? "Aguarde o upload da imagem..." : ""}
         >
-          {isSubmitting ? (
-            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          {isSubmitting || uploadingImage ? (
+            <>
+              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              <span>{uploadingImage ? "Carregando..." : "Processando..."}</span>
+            </>
           ) : (
-            <CheckCircle size={20} />
+            <>
+              <CheckCircle size={20} />
+              <span>{isEdit ? "Salvar Alterações" : "Registar Veículo"}</span>
+            </>
           )}
-          {isEdit ? "Salvar Alterações" : "Registar Veículo"}
         </Button>
       </div>
     </form>
