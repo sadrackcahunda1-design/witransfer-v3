@@ -22,8 +22,6 @@ function normalize(s: string) {
 
 // Helper to fetch core data from Supabase with caching
 async function getBaseData() {
-  console.log('🔍 [SEARCH] Iniciando busca de dados base...');
-
   const [vehicles, categories, extras, services, classPrices, vehiclePrices] = await Promise.all([
     getCachedVehicles(),
     getCachedVehicleClasses(),
@@ -32,14 +30,6 @@ async function getBaseData() {
     getCachedClassPrices(),
     getCachedVehiclePrices(),
   ]);
-
-  console.log('📦 [SEARCH] Dados recebidos:');
-  console.log(`  - Veículos: ${vehicles.length}`);
-  console.log(`  - Categorias: ${categories.length}`);
-  console.log(`  - Extras: ${extras.length}`);
-  console.log(`  - Serviços: ${services.length} (${services.map((s: any) => s.name).join(", ")})`);
-  console.log(`  - Preços de Classes: ${classPrices.length}`);
-  console.log(`  - Preços de Veículos: ${vehiclePrices.length}`);
 
   const cars = vehicles.map((v: any) => {
     const car: Car = {
@@ -90,10 +80,7 @@ async function getBaseData() {
       }
     }
 
-    if (vehicles.length === 1 || v.id === '3b4c53a1-8b60-4742-8bbb-36d131e16127') {
-      console.log(`🔍 [DEBUG] Veículo ${v.brand} ${v.model} (${v.id}) - rawExtras:`, rawExtras);
-      console.log(`🔍 [DEBUG] Veículo ${v.id} - vehicleExtraIds:`, vehicleExtraIds);
-    }
+
 
     (car as any).extras = vehicleExtraIds;
 
@@ -117,15 +104,7 @@ async function getBaseData() {
     return car;
   });
 
-  console.log(`✅ [SEARCH] ${cars.length} carros processados com sucesso`);
-  if (cars.length > 0) {
-    console.log('📋 [SEARCH] Exemplo de carro:', {
-      id: cars[0].id,
-      name: cars[0].name,
-      supplier: cars[0].supplier,
-      extras: (cars[0] as any).extras?.length || 0
-    });
-  }
+
 
   return {
     cars,

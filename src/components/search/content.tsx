@@ -43,17 +43,19 @@ export function SearchPageContent({
 
   useEffect(() => {
     async function init() {
-      // Carregar dados do sistema (categorias, extras, etc) se não vieram do servidor
-      if (!initialSystemData) {
-        const { getSystemData } = await import("@/actions/public/search/cars");
-        try {
-          const systemData = await getSystemData();
-          setCategoriesData(systemData.categories);
-          setExtrasData(systemData.extras);
-        } catch (e) {
-          console.error("Failed to load system data:", e);
+      try {
+        // Carregar dados do sistema (categorias, extras, etc) se não vieram do servidor
+        if (!initialSystemData) {
+          const { getSystemData } = await import("@/actions/public/search/cars");
+          try {
+            const systemData = await getSystemData();
+            if (systemData?.categories) setCategoriesData(systemData.categories);
+            if (systemData?.extras) setExtrasData(systemData.extras);
+          } catch (e) {
+            console.warn("[Search] Falha ao carregar dados de sistema:", e);
+            // Continua com dados vazios, componentes devem lidar com isso
+          }
         }
-      }
 
       // Se já temos initialSearchData, talvez só precisemos atualizar se a URL mudar depois
       // Mas para o primeiro load, initialSearchData é suficiente.
@@ -119,19 +121,27 @@ export function SearchPageContent({
         }
       }
 
-      // Ensure type
-      if (!data.type) {
-        if (defaultType) data.type = defaultType;
-        else if (pathname.includes("/transfer")) data.type = "transfer";
-        else if (pathname.includes("/rental")) data.type = "rental";
-      }
+        // Ensure type
+        if (!data.type) {
+          if (defaultType) data.type = defaultType;
+          else if (pathname.includes("/transfer")) data.type = "transfer";
+          else if (pathname.includes("/rental")) data.type = "rental";
+        }
 
-      setSearchData(data);
-      setIsLoading(false);
+        setSearchData(data);
+      } catch (err) {
+        console.error("[Search] Erro crítico na inicialização:", err);
+        // Mesmo com erro, define dados padrão para evitar carregar infinito
+        setSearchData({
+          type: defaultType || "rental"
+        } as SearchFilters);
+      } finally {
+        setIsLoading(false);
+      }
     }
 
     init();
-  }, [searchParams, pathname, router, defaultType]); // initialSearchData removed from dep array to avoid loops
+  }, [searchParams, pathname, router, defaultType]);
 
   return (
     <>

@@ -55,6 +55,7 @@ export default function BookingDetailsPage() {
   const [cars, setCars] = useState<Car[]>([]);
   const [extras, setExtras] = useState<Extra[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [isValidatingNif, setIsValidatingNif] = useState(false);
   const [validationError, setValidationError] = useState(false);

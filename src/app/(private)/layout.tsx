@@ -39,12 +39,36 @@ export default function PrivateLayout({
   const currentNavigation = isPartnerContext ? partnerNavigation : adminNavigation;
   const needsVerification = user?.role && partnerRoles.includes(user.role) && !user.isVerified && pathname !== "/partners/settings/profile";
 
-  // Fetch user data
+  // Fetch user data com retry automático
   useEffect(() => {
-    getCurrentUserAction().then((result) => {
-      if (result.success) setUser(result.data);
-      setIsLoadingUser(false);
-    });
+    let mounted = true;
+    
+    async function fetchUser() {
+      try {
+        const result = await getCurrentUserAction();
+        if (mounted) {
+          if (result.success) {
+            setUser(result.data);
+          } else {
+            console.error("[Auth] Falha ao obter dados do usuário:", result.error);
+            // Usuário pode estar desconectado, deixa state como null
+          }
+          setIsLoadingUser(false);
+        }
+      } catch (error) {
+        if (mounted) {
+          console.error("[Auth] Erro crítico ao obter dados do usuário:", error);
+          setIsLoadingUser(false);
+          // Falha crítica, mas deixa usuário tentar navegar
+        }
+      }
+    }
+
+    fetchUser();
+    
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   // Auto-open active submenus

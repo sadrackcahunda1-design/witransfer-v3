@@ -55,11 +55,7 @@ interface BookingsClientProps {
 export default function BookingsClient({ initialBookings }: BookingsClientProps) {
     const router = useRouter();
 
-    // DEBUG: Log initial data received from server
-    console.log(`[DEBUG_UI] BookingsClient mounted with ${initialBookings?.length || 0} initial items.`);
-    if (initialBookings?.length > 0) {
-        console.log(`[DEBUG_UI] First item status: ${initialBookings[0].status}, waitlist:`, initialBookings[0].waitlistEntry);
-    }
+
 
     const [partnerFilter, setPartnerFilter] = useState<string>("all");
     const [partners, setPartners] = useState<any[]>([]);
@@ -82,8 +78,7 @@ export default function BookingsClient({ initialBookings }: BookingsClientProps)
         });
     }, []);
 
-    // DEBUG: Log current state after hook processing
-    console.log(`[DEBUG_UI] Current bookings in state: ${bookings?.length || 0}`);
+
 
     const [searchTerm, setSearchTerm] = useState("");
     const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -101,7 +96,6 @@ export default function BookingsClient({ initialBookings }: BookingsClientProps)
     };
 
     const handleUpdateStatus = async (id: string, status: string) => {
-        console.log(`[ACTION] handleUpdateStatus for ID: ${id}, Status: ${status}`);
         setLoadingId(id);
         try {
             let result;
@@ -112,19 +106,17 @@ export default function BookingsClient({ initialBookings }: BookingsClientProps)
                 result = await updateBookingStatusAction(id, status);
             }
 
-            console.log(`[ACTION] Result:`, result);
-
-            if (result.success) {
-                // Update local state by syncing with cache
+            if (result?.success) {
                 syncStatusToCache(id, status === 'confirmed' ? 'confirmed' : 'canceled');
                 toast.success(`Pedido ${status === 'canceled' ? 'cancelado' : 'confirmado'} com sucesso!`);
                 router.refresh();
             } else {
-                toast.error(result.error || "Ocorreu um erro ao processar o pedido.");
+                const errorMsg = result?.error || "Falha ao processar o pedido. Tente novamente.";
+                toast.error(errorMsg);
             }
         } catch (error: any) {
-            console.error(`[ACTION] Error:`, error);
-            toast.error("Erro na comunicação com o servidor.");
+            const errorMsg = error?.message || "Erro na comunicação com o servidor. Verifique sua conexão.";
+            toast.error(errorMsg);
         } finally {
             setLoadingId(null);
         }
