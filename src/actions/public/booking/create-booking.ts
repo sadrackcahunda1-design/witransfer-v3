@@ -2,36 +2,54 @@
 
 import { revalidatePath } from "next/cache";
 import { createPublicAction } from "@/middlewares/actions/action-factory";
-import type { Booking } from "@/types";
+import type { Booking, ActionResult } from "@/types";
 
-export async function createBooking(data: Partial<Booking>) {
+/**
+ * Server Action para criar reserva
+ * Envolve a API POST /api/bookings
+ * Com tratamento de erro robusto e logging
+ */
+export async function createBooking(
+  data: Partial<Booking> & { email?: string; firstName?: string; lastName?: string; phone?: string }
+): Promise<ActionResult> {
   return createPublicAction(
     "CreateBooking",
-    async (bookingData: Partial<Booking>) => {
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000"}/api/bookings`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(bookingData),
-        },
-      );
+    async (bookingData) => {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+      
+      console.log("[Action] Criando booking via API:", apiUrl);
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Erro ao criar reserva");
+      const response = await fetch(`${apiUrl}/api/bookings`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(bookingData),
+      });
+
+      // Parsear resposta
+      const result: ActionResult = await response.json();
+
+      // Validar response - pode ser erro mas com status 200
+      if (!response.ok || !result.success) {
+        const errorMsg = result.error || "Erro ao criar reserva";
+        console.error("[Action] Erro na resposta:", errorMsg);
+        throw new Error(errorMsg);
       }
 
-      const result = await response.json();
+      // Revalidar cache
       revalidatePath("/admin/bookings");
+      revalidatePath("/bookings");
+
+      console.log("[Action] Reserva criada com sucesso");
 
       return {
-        data: result.booking,
-        message: "Reserva criada com sucesso!",
+        success: true,
+        message: result.message || "Reserva criada com sucesso!",
+        data: result.data,
       };
     },
     data,
+    { delay: 500 } // Delay mínimo para feedback visual
   );
 }

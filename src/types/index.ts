@@ -6,12 +6,16 @@
 // ===================================
 // SHARED
 // ===================================
-export interface ActionResult<T = any> {
-    success: boolean;
-    message?: string;
-    error?: string;
-    data?: T;
-}
+export type { ActionResult, ApiResponse, ServerActionResult } from "./action-result";
+export { 
+    createSuccessResult, 
+    createErrorResult, 
+    fromError, 
+    isSuccess, 
+    isError, 
+    getResultData, 
+    getErrorMessage 
+} from "./action-result";
 
 // ===================================
 // PARTNERS (Empresas)

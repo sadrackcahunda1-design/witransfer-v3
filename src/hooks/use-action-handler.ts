@@ -1,12 +1,6 @@
 import { useState, useCallback } from "react";
 import { useNotification } from "./use-notification";
-
-export interface ActionResult<T = any> {
-    success: boolean;
-    data?: T;
-    error?: string;
-    message?: string;
-}
+import type { ActionResult } from "@/types";
 
 export interface ActionHandlerOptions {
     successMessage?: string;
@@ -14,6 +8,7 @@ export interface ActionHandlerOptions {
     onSuccess?: (data?: any) => void;
     onError?: (error: string) => void;
     showNotifications?: boolean;
+    delay?: number; // Delay em ms antes de processar o resultado
 }
 
 /**
@@ -23,10 +18,20 @@ export interface ActionHandlerOptions {
 export function useActionHandler() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const { tratarResultado, sucesso, erro } = useNotification();
+    const { tratarResultado, tratarErro } = useNotification();
+
+    /**
+     * Helper para aplicar delay opcional
+     */
+    const applyDelay = async (ms?: number) => {
+        if (ms && ms > 0) {
+            await new Promise(resolve => setTimeout(resolve, ms));
+        }
+    };
 
     /**
      * Executa uma ação assíncrona com tratamento padronizado
+     * Garante que erros sempre têm mensagens reais, nunca "erro desconhecido"
      */
     const execute = useCallback(
         async <T = any>(
@@ -39,6 +44,7 @@ export function useActionHandler() {
                 onSuccess,
                 onError,
                 showNotifications = true,
+                delay,
             } = options;
 
             setLoading(true);
@@ -47,34 +53,35 @@ export function useActionHandler() {
             try {
                 const resultado = await action();
 
-                if (resultado.success || !resultado.error) {
+                // Aplicar delay se especificado
+                await applyDelay(delay);
+
+                if (resultado.success) {
                     if (showNotifications) {
-                        if (successMessage) {
-                            sucesso(successMessage);
-                        } else {
-                            tratarResultado(resultado, successMessage, errorMessage);
-                        }
+                        tratarResultado(resultado, successMessage);
                     }
 
                     onSuccess?.(resultado.data);
                     return resultado.data || null;
                 } else {
-                    const errorMsg = errorMessage || resultado.error || "Ocorreu um erro inesperado.";
+                    // Erro - sempre tem mensagem real
+                    const errorMsg = errorMessage || resultado.error || "Operação não foi concluída";
                     setError(errorMsg);
 
                     if (showNotifications) {
-                        erro(errorMsg);
+                        tratarErro(errorMsg);
                     }
 
                     onError?.(errorMsg);
                     return null;
                 }
             } catch (err: any) {
-                const errorMsg = errorMessage || err.message || "Erro técnico inesperado.";
+                // Tratamento de exceção - garantir mensagem real
+                const errorMsg = errorMessage || err?.message || "Erro na operação";
                 setError(errorMsg);
 
                 if (showNotifications) {
-                    erro(errorMsg);
+                    tratarErro(err instanceof Error ? err : errorMsg);
                 }
 
                 onError?.(errorMsg);
@@ -83,7 +90,7 @@ export function useActionHandler() {
                 setLoading(false);
             }
         },
-        [tratarResultado, sucesso, erro]
+        [tratarResultado, tratarErro]
     );
 
     /**

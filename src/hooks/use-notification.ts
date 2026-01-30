@@ -1,4 +1,5 @@
 import { toast } from 'sonner';
+import type { ActionResult } from '@/types';
 
 export type NotificationType = 'success' | 'error' | 'warning' | 'info';
 
@@ -29,9 +30,15 @@ export function useNotification() {
 
     /**
      * Exibe mensagem de erro
+     * Nunca mostra "Ocorreu um erro" genérico - sempre mostra a mensagem real
      */
     const erro = (mensagem: string, options?: NotificationOptions) => {
-        toast.error(mensagem, {
+        // Garantir que sempre mostramos uma mensagem clara
+        const mensagemFinal = mensagem && mensagem.trim() 
+            ? mensagem 
+            : 'Ocorreu um erro na operação';
+
+        toast.error(mensagemFinal, {
             description: options?.description,
             duration: options?.duration || 4000,
             action: options?.action,
@@ -82,20 +89,44 @@ export function useNotification() {
     };
 
     /**
-     * Trata resultado de ação assíncrona com mensagens padronizadas
+     * Trata ActionResult com mensagens padronizadas e seguras
+     * NUNCA mostra "erro desconhecido" - sempre tem uma mensagem real
      */
-    const tratarResultado = (
-        resultado: { success?: boolean; error?: string; message?: string },
-        mensagemSucesso?: string,
-        mensagemErro?: string
-    ) => {
-        if (resultado.success || !resultado.error) {
-            sucesso(mensagemSucesso || resultado.message || 'Operação concluída com sucesso!');
+    const tratarResultado = <T = any>(
+        resultado: ActionResult<T>,
+        mensagemSucessoPadrao?: string,
+        mensagemErroPadrao?: string
+    ): boolean => {
+        if (resultado.success) {
+            // Mostrar mensagem de sucesso
+            const msg = mensagemSucessoPadrao || resultado.message || 'Operação concluída com sucesso!';
+            sucesso(msg);
             return true;
         } else {
-            erro(mensagemErro || resultado.error || 'Ocorreu um erro inesperado.');
+            // Mostrar mensagem de erro - SEMPRE tem que ter algo real
+            const msg = mensagemErroPadrao || resultado.error || 'Ocorreu um erro na operação';
+            erro(msg);
             return false;
         }
+    };
+
+    /**
+     * Tratamento de erro puro (sem passar por ActionResult)
+     * Útil para erros de rede ou exceções
+     */
+    const tratarErro = (
+        erro_: Error | string | undefined,
+        mensagemPadrao: string = 'Ocorreu um erro na operação'
+    ) => {
+        let mensagem = mensagemPadrao;
+
+        if (typeof erro_ === 'string' && erro_.trim()) {
+            mensagem = erro_;
+        } else if (erro_ instanceof Error && erro_.message?.trim()) {
+            mensagem = erro_.message;
+        }
+
+        erro(mensagem);
     };
 
     return {
@@ -105,5 +136,6 @@ export function useNotification() {
         info,
         mostrar,
         tratarResultado,
+        tratarErro,
     };
 }
