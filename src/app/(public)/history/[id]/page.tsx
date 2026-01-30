@@ -27,6 +27,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { useBookingPolling } from "@/hooks/use-booking-polling";
+import { notificationService } from "@/lib/notification-service";
 
 export default function BookingDetailPage() {
     const { id } = useParams();
@@ -35,6 +37,7 @@ export default function BookingDetailPage() {
     const [loading, setLoading] = useState(true);
     const [cancelling, setCancelling] = useState(false);
     const [sendingReceipt, setSendingReceipt] = useState(false);
+    const [lastSeenStatus, setLastSeenStatus] = useState<string | null>(null);
 
     useEffect(() => {
         if (id) {
@@ -46,27 +49,45 @@ export default function BookingDetailPage() {
         try {
             const data = await getBookingByIdAction(bookingId);
             setBooking(data);
+            setLastSeenStatus(data?.status || null);
         } catch (error) {
             console.error("Error fetching booking detail:", error);
-            toast.error("Erro ao carregar detalhes da reserva");
+            notificationService.notifyError("Erro ao carregar detalhes da reserva");
         } finally {
             setLoading(false);
         }
     };
 
+    // Polling automático para atualizar status
+    useBookingPolling({
+        bookingId: id as string,
+        interval: 5000, // A cada 5 segundos
+        enabled: !!id && !loading && !!booking,
+        onUpdate: (updatedBooking) => {
+            setBooking(updatedBooking);
+        },
+        onStatusChange: (newStatus, oldStatus) => {
+            // Notificar cliente sobre mudança de status
+            notificationService.notifyClientBookingUpdate(oldStatus, newStatus);
+            setLastSeenStatus(newStatus);
+        }
+    });
+
     const handleCancel = async () => {
-        if (!confirm("Tem certeza que deseja cancelar esta reserva?")) return;
+        if (!confirm("Tem certeza que deseja cancelar esta reserva?\n\nReceberá reembolso completo.")) return;
         setCancelling(true);
         try {
             const result = await cancelBookingAction(id as string);
             if (result.success) {
-                toast.success("Reserva cancelada com sucesso");
+                notificationService.notifySuccess("Reserva cancelada com sucesso! Reembolso será processado em 3-5 dias.");
                 fetchBookingDetail(id as string);
             } else {
-                toast.error("Erro ao cancelar reserva");
+                const errorMsg = result?.error || "Falha ao cancelar reserva. Tente novamente.";
+                notificationService.notifyError(errorMsg);
             }
-        } catch (error) {
-            toast.error("Erro na comunicação com o servidor");
+        } catch (error: any) {
+            const errorMsg = error?.message || "Erro na comunicação com o servidor";
+            notificationService.notifyError(errorMsg);
         } finally {
             setCancelling(false);
         }
@@ -75,7 +96,7 @@ export default function BookingDetailPage() {
     const handleSendReceipt = async () => {
         const email = localStorage.getItem("user_email");
         if (!email) {
-            toast.error("Email do utilizador não encontrado");
+            notificationService.notifyError("Email do utilizador não encontrado. Por favor, recarregue a página.");
             return;
         }
 
@@ -83,12 +104,14 @@ export default function BookingDetailPage() {
         try {
             const result = await resendDigitalReceiptAction(id as string, email);
             if (result.success) {
-                toast.success(`Recibo enviado para ${email}`);
+                notificationService.notifySuccess(`Recibo enviado com sucesso para ${email}`);
             } else {
-                toast.error("Erro ao enviar recibo");
+                const errorMsg = result?.error || "Falha ao enviar recibo. Tente novamente.";
+                notificationService.notifyError(errorMsg);
             }
-        } catch (error) {
-            toast.error("Erro na comunicação com o servidor");
+        } catch (error: any) {
+            const errorMsg = error?.message || "Erro na comunicação com o servidor";
+            notificationService.notifyError(errorMsg);
         } finally {
             setSendingReceipt(false);
         }

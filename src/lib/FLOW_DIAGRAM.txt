@@ -1,0 +1,412 @@
+╔════════════════════════════════════════════════════════════════════════════════╗
+║                       FLUXO COMPLETO DAS MELHORIAS                             ║
+║                    WiTransfer - Tempo Real & Confiabilidade                    ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+
+1. FLUXO CLIENTE (PUBLIC)
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─────────────────┐
+│  Cliente       │
+│  Faz Booking  │
+└────────┬────────┘
+         │
+         ▼
+┌──────────────────────────────────────────┐
+│  POST /api/bookings                      │
+│  fetchWithRetry (retry 3x se falhar)     │
+└────────┬─────────────────────────────────┘
+         │
+    ┌────┴────┐
+    │          │
+    ▼          ▼
+  ✓ OK     ✗ Falha
+   │           │
+   │      Retry 1
+   │      Retry 2
+   │      Retry 3
+   │           │
+   │      ┌────┴─────┐
+   │      │           │
+   │      ▼           ▼
+   │    ✓ OK       ✗ Erro
+   │     │            │
+   └─────┼────────────┘
+       │
+       ▼
+┌──────────────────────────────────────────┐
+│  Booking criado                          │
+│  Status: pending_assignment              │
+│  setBooking(data)                        │
+└────────┬─────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────┐
+│  useBookingPolling ativa!                │
+│  • Executa poll() imediatamente          │
+│  • Cria setInterval(poll, 5000)          │
+│  • Aguarda respostas do servidor         │
+└────────┬─────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────────────────────┐
+│                   POLLING LOOP (A cada 5 segundos)       │
+│                                                           │
+│  GET /api/booking/[id]                                   │
+│         │                                                │
+│    ┌────┴────┐                                           │
+│    │          │                                          │
+│    ▼          ▼                                          │
+│  ✓ Status  ✗ Erro                                       │
+│   mudou?  (network error)                               │
+│    │          │                                          │
+│   SIM        Retry 3x                                    │
+│    │          │                                          │
+│    ▼          ├─► Retry 1                               │
+│ onStatusChange│   Retry 2                               │
+│   callback    │   Retry 3                               │
+│    │          │                                          │
+│    ▼          └─► ✓ OK (mesmo com retry)               │
+│ notificationService                                     │
+│  .notifyClientBookingUpdate()                           │
+│    │                                                     │
+│    ▼                                                     │
+│ [Toast aparece]                                         │
+│ "Reserva confirmada!"                                   │
+│                                                          │
+└────────┬──────────────────────────────────────────────────┘
+         │
+    NÃO │ mudou
+         │
+    Aguarda 5s
+         │
+    volta ao início do loop
+         │
+         ▼
+┌──────────────────────────────────────────┐
+│  Booking completo?                       │
+│  Status === 'completed' ou 'canceled'    │
+└────────┬─────────────────────────────────┘
+         │
+       SIM (sim, clearInterval(poll))
+         │
+         ▼
+┌──────────────────────────────────────────┐
+│  Polling para                            │
+│  Componente desmonta                     │
+│  Sem memory leaks                        │
+└──────────────────────────────────────────┘
+
+
+2. FLUXO PARCEIRO (PRIVATE)
+═══════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────┐
+│  Parceiro       │
+│  No Dashboard   │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────────────────────────────────────────────┐
+│  usePartnerDashboardPolling ativa!                       │
+│  • Executa poll() imediatamente                          │
+│  • Cria setInterval(poll, 10000)                         │
+│  • Monitora novos bookings                              │
+└────────┬─────────────────────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────────────────────┐
+│                 POLLING LOOP (A cada 10 segundos)        │
+│                                                           │
+│  GET /api/admin/listing-bookings                         │
+│         │                                                │
+│    ┌────┴────┐                                           │
+│    │          │                                          │
+│    ▼          ▼                                          │
+│  ✓ OK    ✗ Erro                                         │
+│         (network error)                                  │
+│    │          │                                          │
+│   Novos       Retry 3x                                   │
+│ bookings?     │                                          │
+│    │    ┌─────┴─────┐                                    │
+│    │    │           │                                    │
+│   SIM  Retry 1   ✓ OK                                   │
+│    │   Retry 2   (mesmo com retry)                       │
+│    │   Retry 3   │                                      │
+│    │    │        │                                       │
+│    ▼    └────┬────┘                                      │
+│ onNewBooking │                                          │
+│  callback    │                                          │
+│    │         │                                          │
+│    ▼         ▼                                          │
+│ setBookings( notificationService                        │
+│   data        .notifyPartnerNewBooking()                │
+│ )             │                                          │
+│    │          ▼                                          │
+│    │        [Toast + Sound]                             │
+│    │        🔔 "Novo booking!"                          │
+│    │        "Confirme em 30 minutos"                    │
+│    │          │                                          │
+│    └──────────┴──────────────────────┘                   │
+│                   │                                      │
+│                   ▼                                      │
+│        Dashboard atualiza                               │
+│        Novo booking aparece                             │
+│        Parceiro clica em "Aceitar"                      │
+│                                                          │
+└────────┬──────────────────────────────────────────────────┘
+         │
+    NÃO │ novos bookings
+         │
+    Aguarda 10s
+         │
+    volta ao início do loop
+         │
+         ▼
+┌──────────────────────────────────────────┐
+│  Parceiro sai do Dashboard               │
+│  Polling para                            │
+│  Sem memory leaks                        │
+└──────────────────────────────────────────┘
+
+
+3. FLUXO DE NOTIFICAÇÃO (AMBOS)
+═══════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────────────────────────────┐
+│  onStatusChange / onNewBooking callback  │
+└────────┬─────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────────────────────┐
+│  notificationService.notify()                            │
+│                                                           │
+│  CLIENTE:                                                 │
+│  • Status mudou de "pending" para "assigned"?            │
+│  • Usa NOTIFICATION_MESSAGES.BOOKING_CONFIRMED           │
+│  • Mostra: "Reserva confirmada! Motorista a caminho"     │
+│                                                           │
+│  PARCEIRO:                                                │
+│  • Novo booking chegou?                                  │
+│  • Usa NOTIFICATION_MESSAGES.PARTNER_NEW_BOOKING         │
+│  • Mostra: "Novo booking! Confirme em 30min"            │
+│                                                           │
+└────────┬─────────────────────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────┐
+│  toast.success/warning/error/info()      │
+│  (Biblioteca Sonner)                     │
+└────────┬─────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────┐
+│  [Notificação aparece na tela]          │
+│  ✓ "Reserva confirmada!"                 │
+│  (Desaparece em 3000ms)                  │
+└──────────────────────────────────────────┘
+
+
+4. FLUXO DE RETRY (FALHA DE REDE)
+═══════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────────────────────────────┐
+│  fetch('/api/booking')                   │
+│  (Network error!)                        │
+└────────┬─────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────┐
+│  fetchWithRetry detecta erro             │
+│  • Erro: network timeout                 │
+│  • Max retries: 3                        │
+│  • Backoff: 1000ms                       │
+└────────┬─────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────┐
+│  Tentativa 1                             │
+│  fetch('/api/booking')                   │
+│  ✗ ERRO                                  │
+│                                           │
+│  Aguarda 1000ms                          │
+└────────┬─────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────┐
+│  Tentativa 2                             │
+│  fetch('/api/booking')                   │
+│  ✗ ERRO                                  │
+│                                           │
+│  Aguarda 1000ms                          │
+└────────┬─────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────┐
+│  Tentativa 3                             │
+│  fetch('/api/booking')                   │
+│  ✓ SUCESSO!                              │
+│                                           │
+│  Retorna dados                           │
+└────────┬─────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────┐
+│  Cliente/Parceiro nunca notou o erro!    │
+│  Operação continua normalmente           │
+└──────────────────────────────────────────┘
+
+│ Ou (se todas 3 falharem):
+│
+│ ▼
+│ ┌──────────────────────────────────────────┐
+│ │  throw Error("Network failed after 3...")│
+│ │                                           │
+│ │  Mostra toast:                           │
+│ │  ✗ "Erro de conexão. Tente novamente."   │
+│ │                                           │
+│ │  Usuário notado do erro                  │
+│ └──────────────────────────────────────────┘
+
+
+5. FLUXO COMPLETO: DO CLIENTE ATÉ PARCEIRO
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─────────────┐
+│   CLIENTE   │
+│  Faz Booking│
+└──────┬──────┘
+       │
+       ▼
+┌──────────────────────────────┐
+│ POST /api/bookings           │
+│ (com fetchWithRetry)         │
+└──────┬───────────────────────┘
+       │
+       ▼
+┌──────────────────────────────┐
+│ 🗄 Database                  │
+│ bookings.insert({            │
+│   status: 'pending_...'      │
+│ })                           │
+└──────┬───────────────────────┘
+       │
+       ▼
+┌──────────────────────────────┐
+│ 📱 Cliente vê:              │
+│ useBookingPolling inicia    │
+│ Status: "pending_assignment" │
+│ "Aguardando confirmação..."  │
+└──────┬───────────────────────┘
+       │
+       ▼ (polling a cada 5s)
+       │
+       ▼ (backend notifica parceiro)
+       │
+┌──────────────────────────────┐
+│ 👨‍💼 Parceiro vê:            │
+│ usePartnerDashboardPolling   │
+│ detecta novo booking         │
+│ 🔔 Toast: "Novo booking!"    │
+└──────┬───────────────────────┘
+       │
+       ▼
+┌──────────────────────────────┐
+│ Parceiro clica "Aceitar"     │
+│ PUT /api/bookings/accept     │
+│                              │
+│ 🗄 bookings.update({         │
+│   status: 'confirmed'        │
+│ })                           │
+└──────┬───────────────────────┘
+       │
+       ▼ (polling cliente detecta)
+       │
+┌──────────────────────────────┐
+│ 📱 Cliente vê:              │
+│ Status mudou!               │
+│ 🎉 Toast: "Confirmado!"     │
+│                              │
+│ Cliente FELIZ ✓              │
+└──────────────────────────────┘
+
+
+6. ESTRUTURA DE FICHEIROS CRIADOS
+═══════════════════════════════════════════════════════════════════════════════
+
+/src/
+├── hooks/
+│   ├── use-booking-polling.ts
+│   │   └─ Polling cliente (5s)
+│   │
+│   └── use-partner-dashboard-polling.ts
+│       └─ Polling parceiro (10s)
+│
+├── lib/
+│   ├── notification-service.ts
+│   │   └─ Notificações padronizadas
+│   │
+│   ├── request-helpers.ts
+│   │   ├─ fetchWithRetry (3x)
+│   │   └─ fetchWithTimeout (15s)
+│   │
+│   └── START_HERE.md ← COMECE AQUI!
+│
+└── app/(public)/history/[id]/
+    └── page.tsx
+        └─ Integração completa ✅
+
+
+7. CHECKLIST DE IMPLEMENTAÇÃO
+═══════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────────────────────────────┐
+│ IMEDIATO (Esta semana)                   │
+├──────────────────────────────────────────┤
+│ [✅] Ler START_HERE.md                    │
+│ [✅] Entender hooks de polling             │
+│ [✅] Integrar em /history/[id]             │
+│ [⏳] Integrar em 4+ páginas críticas       │
+│ [⏳] Testar em staging                     │
+│ [⏳] Deploy em produção                    │
+└──────────────────────────────────────────┘
+
+┌──────────────────────────────────────────┐
+│ PRÓXIMA SEMANA (UX)                      │
+├──────────────────────────────────────────┤
+│ [ ] Timeline visual                      │
+│ [ ] Cards coloridos                      │
+│ [ ] ETA de espera                        │
+│ [ ] Preview de reembolso                 │
+│ [ ] Deploy                               │
+└──────────────────────────────────────────┘
+
+┌──────────────────────────────────────────┐
+│ 2 SEMANAS (Auditoria)                    │
+├──────────────────────────────────────────┤
+│ [ ] Audit log table                      │
+│ [ ] Database locks                       │
+│ [ ] Histórico completo                   │
+│ [ ] Deploy                               │
+└──────────────────────────────────────────┘
+
+┌──────────────────────────────────────────┐
+│ 3-4 SEMANAS (Real-time)                  │
+├──────────────────────────────────────────┤
+│ [ ] WebSocket em vez de polling          │
+│ [ ] Supabase Real-time                   │
+│ [ ] Push notifications                   │
+│ [ ] Latência <100ms                      │
+│ [ ] Deploy                               │
+└──────────────────────────────────────────┘
+
+
+╔════════════════════════════════════════════════════════════════════════════════╗
+║                           FIM DO DIAGRAMA                                       ║
+║                                                                                ║
+║  Para mais detalhes, veja:                                                    ║
+║  - START_HERE.md (Guia rápido)                                               ║
+║  - IMPROVEMENTS_IMPLEMENTATION_GUIDE.md (Como implementar)                    ║
+║  - CLIENT_PARTNER_FLOW_ANALYSIS.md (Análise detalhada)                       ║
+╚════════════════════════════════════════════════════════════════════════════════╝
