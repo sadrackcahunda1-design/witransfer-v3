@@ -140,13 +140,17 @@ async function attemptReassignment(booking: any, reason: string) {
     if (altVehicle && altDriver) {
       console.log(`[REASSIGN] ✅ Novo recurso encontrado! Veículo: ${altVehicle.id}, Motorista: ${altDriver.id}, Novo Parceiro: ${altVehicle.partner_id}`);
 
+      // CORRIGIDO: Manter partner_id original, usar reassigned_partner_id para auditoria
+      const isSamePartner = altVehicle.partner_id === booking.partner_id;
+
       const { data: reassigned, error: updateError } = await supabaseAdmin
         .from("bookings")
         .update({
           vehicle_id: altVehicle.id,
           driver_id: altDriver.id,
-          partner_id: altVehicle.partner_id, // Pode ser um novo parceiro
-          status: altVehicle.partner_id === booking.partner_id ? "assigned" : "pending_partner_acceptance", // Status apropriado
+          // MANTÉM partner_id original para auditoria
+          reassigned_partner_id: isSamePartner ? null : altVehicle.partner_id, // Rastreia novo parceiro
+          status: isSamePartner ? "assigned" : "pending_partner_acceptance", // Status apropriado
           reassignment_reason: reason,
           reassignments_count: (booking.reassignments_count || 0) + 1,
           updated_at: new Date().toISOString(),

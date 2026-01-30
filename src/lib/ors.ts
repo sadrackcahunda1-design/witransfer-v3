@@ -17,9 +17,17 @@ export interface GeocodeResult {
     layer?: string;
 }
 
+/**
+ * Helper para fazer fetch com timeout garantido
+ * Previne requisições travando indefinidamente
+ */
 async function fetchWithTimeout(url: string, options: RequestInit = {}, timeout = 10000) {
     const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), timeout);
+    const timeoutId = setTimeout(() => {
+        console.warn(`[ORS] Timeout de ${timeout}ms atingido para ${url}`);
+        controller.abort();
+    }, timeout);
+
     try {
         const response = await fetch(url, {
             ...options,
@@ -27,7 +35,7 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeout 
         });
         return response;
     } finally {
-        clearTimeout(id);
+        clearTimeout(timeoutId);
     }
 }
 
@@ -43,10 +51,18 @@ export async function orsGeocode(text: string): Promise<GeocodeResult[]> {
         const res = await fetchWithTimeout(url);
 
         if (!res.ok) {
+            let errorDetails = "";
+            try {
+                const errorBody = await res.json();
+                errorDetails = errorBody.error?.message || JSON.stringify(errorBody);
+            } catch {
+                errorDetails = await res.text();
+            }
+
             if (res.status === 403 || res.status === 401) {
-                console.error("❌ ORS: API Key expirada ou inválida.");
+                console.error("[ORS-Geocode] API Key expirada ou inválida.", errorDetails);
             } else {
-                console.error(`❌ ORS Geocode falhou com status: ${res.status}`);
+                console.error(`[ORS-Geocode] Erro ${res.status}:`, errorDetails);
             }
             return [];
         }
@@ -86,11 +102,14 @@ export async function orsReverseGeocode(lat: number, lng: number): Promise<{
     province?: string;
     layer?: string;
 } | null> {
-    if (!ORS_API_KEY) return null;
+    if (!ORS_API_KEY) {
+        console.warn("[ORS] API Key não configurada para Reverse Geocode");
+        return null;
+    }
 
     try {
         const url = `https://api.openrouteservice.org/geocode/reverse?api_key=${ORS_API_KEY}&point.lat=${lat}&point.lon=${lng}&boundary.country=AO&size=1`;
-        const res = await fetchWithTimeout(url);
+        const res = await fetchWithTimeout(url, {}, 10000); // Timeout consistente de 10s
 
         if (!res.ok) return null;
 
@@ -129,18 +148,21 @@ export async function orsDirections(waypoints: LatLng[]): Promise<{ distance: nu
             instructions: false,
             units: "m",
             preference: "fastest",
-            radiuses: waypoints.map(() => 5000), // Raio de 5km para encontrar a estrada mais próxima
+            radiuses: waypoints.map(() => 500), // CORRIGIDO: 500m radius para snap mais preciso
         };
 
-        console.log(`📡 [ORS-API] Solicitando rota para ${waypoints.length} pontos (Raio: 5km)...`);
+        console.log(`[ORS-Directions] Solicitando rota para ${waypoints.length} pontos...`);
 
+        // CORRIGIDO: ORS não usa Authorization header, chave vai na URL
         const res = await fetchWithTimeout(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                "Authorization": ORS_API_KEY,
             },
-            body: JSON.stringify(body),
+            body: JSON.stringify({
+                ...body,
+                api_key: ORS_API_KEY, // Chave deve ir no body para POST
+            }),
         }, 12000); // Timeout maior para rotas longas
 
         if (!res.ok) {
